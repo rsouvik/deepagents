@@ -39,7 +39,7 @@ async def create_sql_deep_agent() -> object:
     client = MultiServerMCPClient({
         "database": {
             "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://postgres:cipherdba@ec2-44-206-230-21.compute-1.amazonaws.com:5432/sleep_metrics"],
+            "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://xxxx:xxxx:5432/sleep_metrics"],
             "transport": "stdio",
         }
     })
