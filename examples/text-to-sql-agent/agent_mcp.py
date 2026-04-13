@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import os
 import sys
 
@@ -6,8 +7,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
-from langchain_community.agent_toolkits import SQLDatabaseToolkit
-from langchain_community.utilities import SQLDatabase
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from rich.console import Console
 from rich.panel import Panel
 
@@ -17,31 +17,44 @@ load_dotenv()
 console = Console()
 
 
-def create_sql_deep_agent():
+POSTGRES_SYSTEM_PROMPT = """
+You are a SQL assistant connected to a PostgreSQL database via MCP tools.
+
+Rules:
+- Use PostgreSQL syntax only.
+- Never use SQLite-specific objects or syntax such as `sqlite_master`, `PRAGMA`, or `AUTOINCREMENT`.
+- For table discovery, use PostgreSQL metadata patterns when needed, e.g. `information_schema.tables` with `table_schema = 'public'`.
+- Prefer schema-aware exploration first, then run precise queries.
+""".strip()
+
+async def create_sql_deep_agent() -> object:
     """Create and return a text-to-SQL Deep Agent"""
 
     # Get base directory
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Connect to Chinook database
-    db_path = os.path.join(base_dir, "chinook.db")
-    db = SQLDatabase.from_uri(f"sqlite:///{db_path}", sample_rows_in_table_info=3)
-
-    # Initialize Claude Sonnet 4.5 for to toolkit initialization
+    # Initialize model used for tool selection and SQL generation.
     model = ChatAnthropic(model="claude-sonnet-4-5-20250929", temperature=0)
 
-    # Create SQL toolkit and get tools
-    toolkit = SQLDatabaseToolkit(db=db, llm=model)
-    sql_tools = toolkit.get_tools()
+    client = MultiServerMCPClient({
+        "database": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://postgres:cipherdba@ec2-44-206-230-21.compute-1.amazonaws.com:5432/sleep_metrics"],
+            "transport": "stdio",
+        }
+    })
 
-    # Create the Deep Agent with all parameters
+    db_tools = await client.get_tools()
+
+    # Create the Deep Agent with MCP database tools.
     agent = create_deep_agent(
         model=model,  # Claude Sonnet 4.5 with temperature=0
+        system_prompt=POSTGRES_SYSTEM_PROMPT,
         memory=["./AGENTS.md"],  # Agent identity and general instructions
         skills=[
             "./skills/"
         ],  # Specialized workflows (query-writing, schema-exploration)
-        tools=sql_tools,  # SQL database tools
+        tools=db_tools,  # SQL database tools
         subagents=[],  # No subagents needed
         backend=FilesystemBackend(root_dir=base_dir),  # Persistent file storage
 
@@ -49,8 +62,7 @@ def create_sql_deep_agent():
 
     return agent
 
-
-def main():
+async def main() -> None:
     """Main entry point for the SQL Deep Agent CLI"""
     parser = argparse.ArgumentParser(
         description="Text-to-SQL Deep Agent powered by LangChain Deep Agents and Claude Sonnet 4.5",
@@ -78,13 +90,13 @@ Examples:
 
     # Create the agent
     console.print("[dim]Creating SQL Deep Agent...[/dim]")
-    agent = create_sql_deep_agent()
+    agent = await create_sql_deep_agent()
 
     # Invoke the agent
     console.print("[dim]Processing query...[/dim]\n")
 
     try:
-        result = agent.invoke(
+        result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": args.question}]}
         )
 
@@ -108,4 +120,4 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
